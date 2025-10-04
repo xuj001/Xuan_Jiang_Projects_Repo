@@ -18,9 +18,9 @@
 ---
 
 ### 2024 – **Python Project: Unlocking Potential – Modeling Transferability and Future Performance of D1 Athletes** *(Group Project)*  
-- **Language/Tools**: Python, scikit-learn, pandas, matplotlib  
-- **Description**: Applied machine learning models to NCAA Division 1 athlete data to predict performance transferability between teams and future outcomes.  
-- **Key Findings**: Random forest and regularized regression identified key predictors (training history, position, playtime), improving forecast accuracy for player development.  
+- **Language/Tools**: Python, scikit-learn, pandas, matplotlib, BeautifulSoup (web scraping)  
+- **Description**: Collected NCAA Division 1 athlete data through web scraping and built a pipeline to preprocess, clean, and structure heterogeneous records. Defined a custom similarity function to measure athlete comparability across teams and seasons. Applied supervised and unsupervised learning models to predict transferability and future performance.  
+- **Key Findings**: Web scraping enabled a richer dataset with career and performance histories. Our similarity function improved clustering quality, while random forest and regularized regression identified training history, position, and playtime as key predictors of future success.  
 - **Type**: Group project  
 
 ---
