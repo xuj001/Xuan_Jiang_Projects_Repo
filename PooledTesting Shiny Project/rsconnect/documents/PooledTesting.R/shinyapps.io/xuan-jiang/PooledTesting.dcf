@@ -1,0 +1,12 @@
+name: PooledTesting
+title: PooledTesting
+username: xuan-jiang
+account: xuan-jiang
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 15657632
+bundleId: 10992252
+url: https://xuan-jiang.shinyapps.io/PooledTesting/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE

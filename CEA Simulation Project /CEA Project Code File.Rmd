@@ -1,0 +1,377 @@
+---
+title: "CEA Project Code File"
+author: "Xuan Jiang"
+date: "2025-03-27"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### 1. Markov State Diagram
+```{r}
+library(DiagrammeR)
+
+grViz("
+digraph HPV_Markov {
+  graph [layout = dot, rankdir = LR]
+
+  node [shape = ellipse, style = filled, fillcolor = lightblue, fontname = Helvetica]
+
+  Healthy [label = 'Healthy']
+  HPV_LR [label = 'HPV Infection\\n(Low-Risk, non-oncogenic)']
+  HPV_HR [label = 'HPV Infection\\n(High-Risk, oncogenic)']
+  HPV_Cancer [label = 'Cancer\\n(HPV related)']
+  Death [label = 'Death', fillcolor = gray90]
+
+  # Define directed edges (with arrows)
+  
+  Healthy -> HPV_LR
+  Healthy -> HPV_HR
+  Healthy -> Death
+  
+
+  HPV_LR -> Death
+  HPV_LR -> Healthy
+  HPV_LR -> HPV_LR 
+  HPV_HR -> HPV_HR 
+  HPV_HR -> Healthy
+  HPV_HR -> HPV_Cancer
+  
+  HPV_Cancer -> Death 
+  HPV_Cancer -> Healthy
+
+}
+")
+
+```
+### 2. Transition Probability Matrices 
+```{r cohort simulation}
+
+set.seed(1238934)
+# Step 1 - Define transition probability matrix 
+# Define state names
+states = c(
+  "Healthy",
+  "HPV_LR",         # HPV Infection (Low-Risk)
+  "HPV_HR",         # HPV Infection (High-Risk, oncogenic)
+  "Cancer_HPV",
+  "Death"
+)
+
+P = matrix(0, nrow = length(states), ncol = length(states))
+rownames(P) = colnames(P) = states
+
+# Fill in transition probabilities
+P["Healthy", "HPV_LR"]    = 0.9*13/340.9  # Healthy → Low-Risk HPV
+P["Healthy", "HPV_HR"]    = 0.1*13/340.9  # Healthy → High-Risk HPV
+P["Healthy", "Cancer_HPV"] = 10184/340900000  
+P["Healthy", "Death"]     = 0.009841  
+P["Healthy", "Healthy"]   = 1 - sum(P["Healthy", c("HPV_LR", "HPV_HR", "Cancer_HPV", "Death")])
+
+P["HPV_LR", "Healthy"] = 0.68    
+P["HPV_LR", "HPV_HR"] = 0.9*13/340.9 # same as healthy to HPV_HR    
+P["HPV_LR", "HPV_LR"] = 1 - P["HPV_LR", "Healthy"] - P["HPV_LR", "HPV_HR"]  
+
+P["HPV_HR", "Cancer_HPV"] = 37800/13000000  
+P["HPV_HR", "HPV_HR"]     = 1 - P["HPV_HR", "Cancer_HPV"]  
+
+P["Cancer_HPV", "Death"]  = 0.159         
+P["Cancer_HPV", "Healthy"] = 1-((1-0.91)^(1/5))
+P["Cancer_HPV", "Cancer_HPV"] = 1 - P["Cancer_HPV", "Death"] - P["Cancer_HPV", "Healthy"] 
+
+P["Death", "Death"] = 1 
+
+round(P, 6)
+
+# Strategy: Cervarix - Bivalent 
+P_cervarix = P
+# vaccine efficiency is 90% against strains HPV-16/18 → ~30% of total HPV-related cancers.
+P_cervarix["Healthy", "HPV_HR"] = P["Healthy", "HPV_HR"] * (1 - 0.90 * 0.30)
+# vaccine efficiency is 90% against strains HPV-16/18 → ~30% of total HPV-related cancers.
+# P_cervarix["HPV_HR", "Cancer_HPV"] = P["HPV_HR", "Cancer_HPV"] * (1 - 0.90 * 0.30)
+P_cervarix["Healthy", "Healthy"] = 1 - sum(P_cervarix["Healthy", c("HPV_LR", "HPV_HR", "Cancer_HPV", "Death")])
+P_cervarix["HPV_HR", "HPV_HR"] = 1 - P_cervarix["HPV_HR", "Cancer_HPV"]
+round(P_cervarix,6)
+
+# Strategy: Gardasil 9 - Quadrivalent
+P_gardasil = P
+# Gardasil 9 protects against 90% of low-risk HPV (types 6 & 11), which cause genital warts
+# So only 10% of LR infections still occur
+P_gardasil["Healthy", "HPV_LR"] = P["Healthy", "HPV_LR"] * (1 - 0.90)
+# Protects against: HPV-16/18 + 5 more HR types (total ~60% of HR types), efficiency 90%
+P_gardasil["Healthy", "HPV_HR"] = P["Healthy", "HPV_HR"] * (1 - 0.90*0.60) 
+# Gardasil 9 protects nearly 100% HPV_HR --> HPV related cancers, based on the pic 0.99
+# DO NOT reduce cancer progression once HPV_HR is acquired
+# P_gardasil["HPV_HR", "Cancer_HPV"] = P["HPV_HR", "Cancer_HPV"] * (1 - 0.99)
+P_gardasil["Healthy", "Healthy"] = 1 - sum(P_gardasil["Healthy", c("HPV_LR", "HPV_HR", "Cancer_HPV", "Death")])
+P_gardasil["HPV_HR", "HPV_HR"] = 1 - P_gardasil["HPV_HR", "Cancer_HPV"]
+round(P_gardasil,6)
+# check if the row add up to 1
+# rowSums(P_gardasil)
+# rowSums(P_cervarix)
+```
+
+### 3. Cohort Simulation Logic and Function 
+```{r cohort sim function}
+# Step 2 - Simulate the cohort movement
+# Initialization 
+N0 = 100000   # Healthy
+N1 = 0        # HPV_LR
+N2 = 0        # HPV_HR
+N3 = 0        # Cancer_HPV
+N4 = 0        # Death
+N = c(N0, N1, N2, N3, N4)
+
+# Helper Function - Matrix multiplication 
+matrix_multiply = function(N, probs) {
+  return(as.numeric(N %*% probs))  
+}
+
+### Cohort Simulation Function
+cohort.sim = function(N, probs, max_cycles = 50) {
+  cohort_data = data.frame(Cycle = 0, 
+                           Healthy = N[1], 
+                           HPV_LR = N[2], 
+                           HPV_HR = N[3], 
+                           Cancer_HPV = N[4], 
+                           Death = N[5])
+  
+  cycle_num = 0 
+  total_pop = sum(N)
+  
+  while (cycle_num < max_cycles && N[5] < total_pop * 0.99) {
+    cycle_num = cycle_num + 1
+    N = matrix_multiply(N, probs)
+    new_row = data.frame(Cycle = cycle_num, 
+                         Healthy = round(N[1]), 
+                         HPV_LR = round(N[2]), 
+                         HPV_HR = round(N[3]), 
+                         Cancer_HPV = round(N[4]), 
+                         Death = round(N[5]))
+    cohort_data = rbind(cohort_data, new_row)
+  }
+  return(cohort_data)
+}
+```
+
+### 4. Run Simulation and Compute Health Outcomes 
+```{r run simulation and compare qalys mortality }
+set.seed(1234)
+cohort_none = cohort.sim(N, P, 50)
+tail(cohort_none)
+cohort_cervarix = cohort.sim(N, P_cervarix, 50)
+tail(cohort_cervarix)
+cohort_gardasil = cohort.sim(N, P_gardasil, 50)
+tail(cohort_gardasil)
+
+# Utility values for QALYs
+utility = c("Healthy" = 1.00, 
+            "HPV_LR" = 0.95, 
+            "HPV_HR" = 0.9, 
+            "Cancer_HPV" = 0.49, 
+            "Death" = 0.00)
+
+# Calculate QALYs from cohort simulation output
+calculate_avg_qalys = function(cohort_df, utility) {
+# Multiply each row (state counts per cycle) by the utility of each state
+total_qalys_vec = as.matrix(cohort_df[,names(utility)])%*%utility
+avg_qalys_vec = total_qalys_vec/100000
+avg_qalys = sum(avg_qalys_vec)
+  return(avg_qalys)
+}
+
+# Apply function to each strategy - this return the qalys per person 
+qalys_none = calculate_avg_qalys(cohort_none, utility)
+qalys_none
+qalys_cervarix = calculate_avg_qalys(cohort_cervarix, utility)
+qalys_cervarix
+qalys_gardasil = calculate_avg_qalys(cohort_gardasil, utility)
+qalys_gardasil
+
+# mortality compare 
+# people in the sick state/ total population 
+
+
+```
+
+### 5. Costs & Discount Rate 
+```{r cost data}
+set.seed(124556)
+# One-time vaccine cost per person
+vaccine_costs = list(
+  none = 0,
+  cervarix = 200,    # 2 doses
+  gardasil = 771.213     # 3 doses
+)
+# cost of health state per person 
+costs = c(
+  Healthy = 25.7, # annual 
+  HPV_LR = 916, # Charge only once (new HPV_LR infections)
+  HPV_HR = 1500, # Charge only once (new HPV_HR infections)
+  Cancer_HPV = 45000, # charge only once, once the person move to this state 
+  Death = 0
+)
+
+# Set discount rate - money depricates over time 
+discount_rate = 0.03
+# create a df that has discount% for each cycle
+discount_factors = 1 / (1 + discount_rate)^(0:50)
+
+### discounted qalys per person 
+calculate_avg_qalys_discounted = function(cohort_df, utility_vector, discount_factors) {
+  state_matrix = as.matrix(cohort_df[, names(utility_vector)])
+  
+  qalys_per_cycle = state_matrix %*% utility_vector
+  avg_qalys_per_cycle = qalys_per_cycle / 100000  # per person
+  
+  # Apply discounting
+  discounted_qalys = avg_qalys_per_cycle * discount_factors[1:nrow(cohort_df)]
+  
+  total_discounted_qalys = sum(discounted_qalys)
+  return(total_discounted_qalys)
+}
+
+# Discounted qalys per person 
+cat("\nDiscounted Results:\n")
+cat("  QALYs (None):", round(qalys_none_discounted, 2), "\n")
+cat("  QALYs (Cervarix):", round(qalys_cervarix_discounted, 2), "\n")
+cat("  QALYs (Gardasil):", round(qalys_gardasil_discounted, 2), "\n\n")
+
+### discounted total cost 
+# helper function to calculate the number of people newly moving into each health state at each cycle
+calculate_new_entries = function(cohort_df) {
+  new_entries = cohort_df
+  # pmax() keeps the positive diff 
+  new_entries[-1, 2:6] = pmax(0, diff(as.matrix(cohort_df[, 2:6])))  # 2:6 selects Healthy, HPV_LR, HPV_HR, Cancer_HPV, Death
+  new_entries[1, 2:6] = 0  # No new entries at time 0
+  return(new_entries)
+}
+
+new_entries_none = calculate_new_entries(cohort_none)
+new_entries_cervarix = calculate_new_entries(cohort_cervarix)
+new_entries_gardasil = calculate_new_entries(cohort_gardasil)
+
+# calculate the discounted total cost 
+calculate_discounted_total_cost = function(cohort_df, new_entries_df, cost_vector, vaccine_cost, discount_factors) {
+  # Annual costs (only Healthy is charged annually)
+  annual_states = c("Healthy")
+  annual_costs = as.matrix(cohort_df[, annual_states]) %*% cost_vector[annual_states]
+  
+  # One-time costs (charged only for new transitions)
+  onetime_states = c("HPV_LR", "HPV_HR", "Cancer_HPV")
+  onetime_costs = as.matrix(new_entries_df[, onetime_states]) %*% cost_vector[onetime_states]
+  
+  # Total cost per cycle
+  total_cycle_costs = annual_costs + onetime_costs
+  
+  # Apply discounting
+  discounted_costs = total_cycle_costs * discount_factors[1:nrow(cohort_df)]
+  
+  # Sum up discounted costs
+  total_state_cost = sum(discounted_costs)
+  
+  # Add vaccine cost once at the beginning (cycle 0)
+  initial_pop = sum(cohort_df[1, names(cost_vector)])
+  total_cost = total_state_cost + (initial_pop * vaccine_cost)
+  
+  return(total_cost)
+}
+
+# Recalculate total costs with discounted charging
+cost_none_discounted = calculate_discounted_total_cost(cohort_none, new_entries_none, costs, vaccine_costs$none, discount_factors)/100000
+cost_cervarix_discounted = calculate_discounted_total_cost(cohort_cervarix, new_entries_cervarix, costs, vaccine_costs$cervarix, discount_factors)/100000
+cost_gardasil_discounted = calculate_discounted_total_cost(cohort_gardasil, new_entries_gardasil, costs, vaccine_costs$gardasil, discount_factors)/100000
+
+# Recalculate ICERs
+icer_cervarix_vs_none_discounted = (cost_cervarix_discounted - cost_none_discounted) / (qalys_cervarix_discounted - qalys_none_discounted)
+icer_gardasil_vs_none_discounted = (cost_gardasil_discounted - cost_none_discounted) / (qalys_gardasil_discounted - qalys_none_discounted)
+icer_gardasil_vs_cervarix_discounted = (cost_gardasil_discounted - cost_cervarix_discounted) / (qalys_gardasil_discounted - qalys_cervarix_discounted)
+
+# Print discounted results
+cat("\ndiscounted Discounted Results:\n")
+cat("  Total Cost (None): $", round(cost_none_discounted, 2), "\n")
+cat("  Total Cost (Cervarix): $", round(cost_cervarix_discounted, 2), "\n")
+cat("  Total Cost (Gardasil): $", round(cost_gardasil_discounted, 2), "\n\n")
+
+cat("ICERs (discounted, USD per QALY):\n")
+cat("  Cervarix vs None: $", round(icer_cervarix_vs_none_discounted, 2), "\n")
+cat("  Gardasil vs None: $", round(icer_gardasil_vs_none_discounted, 2), "\n")
+cat("  Gardasil vs Cervarix: $", round(icer_gardasil_vs_cervarix_discounted, 2), "\n")
+```
+### 6. Result Explore & Analysis 
+
+```{r CEA Plot}
+# Create a data frame of strategies
+cea_df <- data.frame(
+  Strategy = c("None", "Cervarix", "Gardasil 9"),
+  Cost = c(cost_none_discounted, cost_cervarix_discounted, cost_gardasil_discounted),
+  QALY = c(qalys_none_discounted, qalys_cervarix_discounted, qalys_gardasil_discounted)
+)
+
+# Calculate incremental values
+cea_df <- cea_df[order(cea_df$QALY), ]
+cea_df$Incremental_Cost <- c(NA, diff(cea_df$Cost))
+cea_df$Incremental_QALY <- c(NA, diff(cea_df$QALY))
+
+# Plot the cost-effectiveness plane
+library(ggplot2)
+ggplot(cea_df[-1, ], aes(x = Incremental_QALY, y = Incremental_Cost, label = Strategy[-1])) +
+  geom_point(size = 3) +
+  geom_text(nudge_x = 0.02, nudge_y = 500, size = 4) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +
+  labs(
+    title = "Cost-Effectiveness Plane",
+    x = "Incremental QALYs",
+    y = "Incremental Cost (USD)"
+  ) +
+  theme_minimal()
+
+
+# Your data
+data <- data.frame(
+  strategy = c("Cervarix", "Gardasil 9"),
+  qalys = c(qalys_cervarix_discounted, qalys_gardasil_discounted),
+  cost = c(cost_cervarix_discounted, cost_gardasil_discounted)
+)
+
+# Willingness-to-pay threshold
+wtp <- 50000
+
+# Create the plot
+# Define boundaries for quadrants
+x_mid <- mean(range(data$qalys))
+y_mid <- mean(range(data$cost))
+
+# Plot
+ggplot(data, aes(x = qalys, y = cost, label = strategy)) +
+  # Color zones
+  annotate("rect", xmin = x_mid, xmax = Inf, ymin = -Inf, ymax = y_mid, fill = "lightgreen", alpha = 0.3) +
+  annotate("rect", xmin = -Inf, xmax = x_mid, ymin = y_mid, ymax = Inf, fill = "lightpink", alpha = 0.3) +
+  
+  # Diagonal line (can be interpreted as ICER threshold reference line)
+  geom_abline(slope = (diff(range(data$cost)) / diff(range(data$qalys))), intercept = min(data$cost) - min(data$qalys) * (diff(range(data$cost)) / diff(range(data$qalys))), 
+              linetype = "dashed", color = "black") +
+
+  # Points and labels
+  geom_point(color = "black", size = 3) +
+  geom_label(hjust = 0, nudge_x = 0.01, fill = "white", label.size = 0.4) +
+  
+  # Add quadrant text
+  annotate("text", x = x_mid + 0.02, y = y_mid - 50, label = "Dominant", fontface = "bold", color = "darkgreen", size = 5) +
+  annotate("text", x = x_mid - 0.02, y = y_mid + 50, label = "Dominated", fontface = "bold", color = "darkred", size = 5) +
+  
+  labs(title = "Cost-Effectiveness Plane",
+       x = "Effectiveness (QALYs)",
+       y = "Cost (USD)") +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5)) +
+  theme_minimal()
+
+```
+- X-axis (Effectiveness): Measured in QALYs (Quality-Adjusted Life Years). Rightward = more health benefit.\
+- Y-axis (Cost): Measured in USD. Upward = more expensive.\
+
