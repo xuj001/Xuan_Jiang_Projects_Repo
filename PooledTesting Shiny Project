@@ -1,0 +1,142 @@
+# Pooled Testing for Infectious Diseases 
+
+The **"Pooled Testing for Infectious Diseases"** Shiny app is designed to assist healthcare providers and researchers in optimizing the pooling of samples for infectious disease testing. By utilizing Monte Carlo simulations, the app calculates the most efficient grouping of samples to reduce the total number of tests needed without compromising the accuracy of disease detection.
+
+This tool offers a practical solution for optimizing testing strategies through sample pooling, particularly useful during outbreaks. It provides a scientific basis for testing logistics, aiming to reduce costs and increase testing throughput.
+
+------------------------------------------------------------------------
+
+### Features
+
+-   **Interactive UI**: A user-friendly interface with multiple tabs, including a project overview, detailed methodological explanations, and interactive simulation results.
+-   **Disease, Age Group, and Infection Rate Customization**:
+    -   Users can select specific diseases and corresponding age groups.
+    -   Option to adjust infection rates to customize simulation parameters.
+-   **Results Display**:
+    -   Graphical line charts and detailed tables showing simulation outcomes.
+    -   Highlights optimal pooling strategies and expected number of tests.
+-   **Responsive Design**: Adapts to user inputs with real-time updates and informative pop-ups for disease-specific information.
+
+------------------------------------------------------------------------
+
+### Application Components
+
+#### Data Source
+
+-   **Predefined Infection Data**:
+    -   The app uses infection probabilities for common respiratory diseases (e.g., Influenza, RSV)
+    -   These probabilities are categorized by age groups (e.g., `<5`, `18-64`) and are based on research.
+    -   The infection probabilities are automatically selected based on the user’s choice of disease and age group.
+-   **Dynamic Simulation Data**:
+    -   For diseases not included in the predefined list, users can input custom infection probabilities along with sample sizes.
+    -   Simulations use these inputs to generate test outcomes dynamically using a binomial distribution.
+
+#### User Interface (UI)
+
+-   **`navbarPage` Structure**: Includes a main title with disease icons and different tabs for navigating the app’s features.
+
+##### Tab1. **Project Overview**
+
+-   **Project Overview**: Introduces the concept of pooled testing and its benefits during outbreaks.
+-   **Methods**: Explains the Monte Carlo simulation methodology.
+-   **Usage Instructions**: Step-by-step guidance on how to use the app.
+-   **Disease Exploration**: Quick access buttons for disease-specific information with detailed pop-up modals.
+
+##### Tab2. **Know Your Disease Type**
+
+-   For users testing common respiratory diseases:
+    -   Select a disease (e.g., Influenza, RSV).
+    -   Choose an age group (e.g., `<5`, `18-64`).
+    -   Enter the total number of samples to test.
+-   Predefined infection probabilities sourced from CDC data.
+-   Outputs:
+    -   Optimal pool size.
+    -   Expected number of tests.
+    -   Detailed plots and tables summarizing the simulation results.
+
+##### Tab3. **Know Your Infection Probability**
+
+-   For users testing other diseases with known infection probabilities:
+    -   Enter the total number of samples.
+    -   Specify the infection probability (`0 < p < 0.5`).
+-   Outputs:
+    -   **Optimal Pool Size Summary**: Displays the optimal pool size and the corresponding expected number of tests (e.g., "Optimal pool size: 11, with expected tests: 57").
+    -   Line charts illustrating the efficiency of different pool sizes.
+    -   Tables displaying detailed simulation results for each pool size.
+
+------------------------------------------------------------------------
+
+### Server Logic
+
+#### Monte Carlo Simulation Function (`mc_pooled_testing`)
+
+The app’s computational core is the **`mc_pooled_testing`** function, which uses Monte Carlo simulations to estimate the efficiency of pooled testing strategies. This statistical method determines the optimal number of samples to pool to minimize the total number of tests required while ensuring accurate disease detection.
+
+The function accepts three parameters:
+
+-   **`num_sim`**: The number of simulations to run. To balance computational efficiency and result validity, this value is set to **10,000**, ensuring robust estimates while minimizing runtime.
+-   **`N`**: The total number of samples to test.
+-   **`p`**: The probability of infection in the population.
+
+#### Function Logic - Simulation
+
+1.  **Initialization**:
+    -   The maximum pool size (`max_n`) is set to the ceiling of the square root of `N` for computational efficiency and manageable group sizes.
+2.  **Loop through Pool Sizes**:
+    -   For each pool size (from 1 to `max_n`), the function calculates the expected number of tests required.
+    -   Samples are divided into groups of the current pool size, ensuring all samples are tested.
+3.  **Simulation for Each Group**:
+    -   Generate a random distribution of infected samples using the binomial distribution (`rbinom`).
+    -   Identify groups with at least one infected sample（positive group).
+    -   Calculate additional tests for positive groups (each needs to be retested).
+    -   Sum the initial group tests and the additional tests to get the total tests for the simulation.
+4.  **Average Results**:
+    -   Compute the average number of tests for each pool size across all simulation runs.
+    -   The results provide an estimate of testing efficiency for each pool size.
+
+#### Function Output
+
+-   The function returns a data frame with **Pool sizes** and **Expected number of tests** for each size.
+
+------------------------------------------------------------------------
+
+### Event Observers
+
+-   **Disease Buttons**: Trigger modal dialogs with detailed disease descriptions.
+-   **Submit Actions**: Process user inputs, run simulations, and display results dynamically.
+-   **Reset Actions**: Clear inputs and restart the analysis.
+
+------------------------------------------------------------------------
+
+### Visual Outputs
+
+-   **Line Charts**:
+    -   Show the relationship between pool size and the expected number of tests.
+    -   Highlights the optimal pool size with a vertical dashed red line and the corresponding tests with a horizontal dashed blue line.
+-   **Optimal Pool Size Summary**:
+    -   Provides a clear, text-based summary (e.g., "Optimal pool size: 11, with expected tests: 57").
+-   **Data Tables**:
+    -   Display detailed simulation results, including expected tests for each pool size.
+
+------------------------------------------------------------------------
+
+### Acknowledgments
+
+-   **References for Disease Information**:
+    -   **Influenza**: [CDC - Influenza Overview](https://www.cdc.gov/flu/about/index.html#:~:text=The%20same%20OCID%20study%20found%2Cadults%2065%20years%20and%20older.)
+    -   **Norovirus**: [PMC - Norovirus Overview](https://pmc.ncbi.nlm.nih.gov/articles/PMC4704656/)
+    -   **Adenovirus**:
+        -   [CDC - Adenovirus Overview](https://www.cdc.gov/mmwr/volumes/66/wr/mm6639a2.htm)
+        -   [ASM - Adenovirus Research](https://journals.asm.org/doi/10.1128/jcm.01237-23)
+    -   **Rhinovirus**:
+        -   [JAMA - Rhinovirus Research](https://jamanetwork.com/journals/jamanetworkopen/fullarticle/2801017)
+        -   [CDC - Common Cold and Rhinovirus](https://www.cdc.gov/common-cold/about/index.html)
+    -   **RSV (Respiratory Syncytial Virus)**:
+        -   [PMC - RSV Research](https://pmc.ncbi.nlm.nih.gov/articles/PMC7568930/#:~:text=RSV%20infection%20has%20been%20estimated%2Cled%20to%20hospitalization%20%20%5B13%5D)
+        -   [CDC - RSV Overview](https://www.cdc.gov/rsv/php/surveillance/index.html)
+-   Built with **Shiny**, **ggplot2**, **bslib**, and **DT** in R.
+
+### Published App URL
+
+-   [Pooled Testing Simulation](https://xuan-jiang.shinyapps.io/Shiny/)
+
